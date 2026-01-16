@@ -159,9 +159,10 @@
             background: rgba(0,0,0,0.4);
             color: var(--text-light);
             font-size: 14px;
+            cursor: pointer;
         }
 
-        .ai-difficulty:disabled { opacity: 0.4; }
+        .ai-difficulty:disabled { opacity: 0.4; cursor: not-allowed; }
 
         .trump-section {
             text-align: center;
@@ -184,6 +185,7 @@
             border: 2px solid var(--gold);
             background: rgba(0,0,0,0.4);
             color: var(--text-light);
+            cursor: pointer;
         }
 
         .start-btn {
@@ -526,10 +528,18 @@
             border: 1px solid rgba(255,255,255,0.3);
         }
 
+        .btn-pass:hover:not(:disabled) {
+            background: rgba(255,255,255,0.2);
+        }
+
         .btn-hint {
             background: rgba(100,100,255,0.2);
             color: #aaf;
             border: 1px solid rgba(100,100,255,0.4);
+        }
+
+        .btn-hint:hover:not(:disabled) {
+            background: rgba(100,100,255,0.3);
         }
 
         .ai-thinking {
@@ -1880,6 +1890,9 @@ function endRound() {
 function startNextRound() {
     roundModal.classList.remove('active');
 
+    // Save the head player before clearing (head leads next round)
+    const nextLeader = gameState.finishOrder[0] || 0;
+
     gameState.currentPlay = null;
     gameState.currentPlayType = null;
     gameState.currentPlayPlayer = null;
@@ -1894,7 +1907,7 @@ function startNextRound() {
         gameState.trump = RANKS[trumpIdx + 1];
     }
 
-    gameState.currentPlayerIdx = gameState.finishOrder[0] || 0;
+    gameState.currentPlayerIdx = nextLeader;
     gameState.roundActive = true;
 
     const deck = shuffleDeck(createDeck());
