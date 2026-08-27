@@ -1,0 +1,61 @@
+name: Temporary Round 21 scGPT contextual gate fixed
+
+on:
+  push:
+    branches:
+      - tmp-round21-contextual-preflight-20260827
+    paths:
+      - '.github/workflows/tmp-round21-scgpt-contextual-fixed.yml'
+      - 'round21_fixed/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-round21-scgpt-contextual-fixed-20260827
+  cancel-in-progress: true
+
+jobs:
+  contextual-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      OMP_NUM_THREADS: '4'
+      OPENBLAS_NUM_THREADS: '4'
+      MKL_NUM_THREADS: '4'
+      NUMEXPR_NUM_THREADS: '4'
+      MPLBACKEND: Agg
+      PYTHONHASHSEED: '0'
+      TOKENIZERS_PARALLELISM: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-round21-contextual-preflight-20260827
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Run compatibility-fixed real contextual gate
+        run: bash round21_fixed/run.sh
+      - name: Record provenance and remove biological/model payloads
+        if: always()
+        run: |
+          mkdir -p results
+          {
+            echo "commit=${GITHUB_SHA}"
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "runner=${RUNNER_OS}"
+            python --version || true
+            python -m pip freeze || true
+          } > results/PROVENANCE.txt
+          rm -rf data vendor
+          find results -type f -printf '%P %s bytes\n' | sort > results/RESULT_FILE_SIZES.txt || true
+          du -sh results || true
+      - name: Upload derived results only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: round21-scgpt-contextual-fixed
+          path: results/
+          if-no-files-found: error
+          retention-days: 14
