@@ -1,0 +1,31 @@
+name: Temporary Round 21 contextual source export
+
+on:
+  push:
+    branches:
+      - tmp-round21-contextual-preflight-20260827
+    paths:
+      - '.github/workflows/tmp-round21-contextual-source-export.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-round21-contextual-preflight-20260827
+      - name: Reconstruct audited sources
+        run: |
+          mkdir -p export
+          cat tmp_round21/contextual_transport/part* | base64 --decode | gzip -dc > export/round21_scgpt_contextual.py
+          echo '128dd96a1748005717d1399ba94ffde4bfd41c435083c88b4e512c42f1dd0280  export/round21_scgpt_contextual.py' | sha256sum -c -
+      - uses: actions/upload-artifact@v4
+        with:
+          name: round21-contextual-source
+          path: export/round21_scgpt_contextual.py
+          retention-days: 2
