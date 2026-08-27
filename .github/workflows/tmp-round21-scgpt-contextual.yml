@@ -1,0 +1,176 @@
+name: Temporary Round 21 scGPT contextual utilization gate
+
+on:
+  push:
+    branches:
+      - tmp-round21-contextual-preflight-20260827
+    paths:
+      - '.github/workflows/tmp-round21-scgpt-contextual.yml'
+      - 'tmp_round21/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-round21-scgpt-contextual-20260827
+  cancel-in-progress: true
+
+jobs:
+  contextual-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      OMP_NUM_THREADS: '4'
+      OPENBLAS_NUM_THREADS: '4'
+      MKL_NUM_THREADS: '4'
+      NUMEXPR_NUM_THREADS: '4'
+      MPLBACKEND: Agg
+      PYTHONHASHSEED: '0'
+      TOKENIZERS_PARALLELISM: 'false'
+    steps:
+      - name: Checkout isolated branch
+        uses: actions/checkout@v4
+        with:
+          ref: tmp-round21-contextual-preflight-20260827
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install minimal inference stack and reconstruct audited sources
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+          python -m pip install anndata h5py numpy pandas scipy scikit-learn matplotlib tabulate scanpy awscli
+          git clone --filter=blob:none https://github.com/bowang-lab/scGPT.git vendor/scGPT
+          git -C vendor/scGPT checkout cebd6fae655b9c585a4807daa3ac31bb764f06b4
+          cat > vendor/scGPT/scgpt/__init__.py <<'PY'
+          import logging, sys
+          logger = logging.getLogger('scGPT')
+          if not logger.handlers:
+              logger.setLevel(logging.INFO)
+              logger.addHandler(logging.StreamHandler(sys.stdout))
+          PY
+          cat > vendor/scGPT/scgpt/model/__init__.py <<'PY'
+          from .model import TransformerModel
+          PY
+          cat tmp_round21/round20_base.py.gz.b64.part* | base64 --decode | gzip -dc > tmp_round21/round20_base.py
+          cat tmp_round21/round21_scgpt_contextual.py.gz.b64.part* | base64 --decode | gzip -dc > tmp_round21/round21_scgpt_contextual.py
+          echo '8ecb07bcb7f48d7b1bab4f9e05642e7b5a616bd114fd41812e13de5f25f2a171  tmp_round21/round20_base.py' | sha256sum -c -
+          echo '128dd96a1748005717d1399ba94ffde4bfd41c435083c88b4e512c42f1dd0280  tmp_round21/round21_scgpt_contextual.py' | sha256sum -c -
+          python -m py_compile tmp_round21/round20_base.py tmp_round21/round21_scgpt_contextual.py
+          PYTHONPATH="$PWD/vendor/scGPT" python tmp_round21/round21_scgpt_contextual.py --round20-base tmp_round21/round20_base.py --self-test
+
+      - name: Download real control-cell, pseudobulk, checkpoint, semantic, and CORUM inputs
+        run: |
+          set -euo pipefail
+          mkdir -p data/embeddings data/scgpt results
+          curl -L --fail --retry 12 --retry-all-errors --retry-delay 8 --connect-timeout 30 --speed-limit 1024 --speed-time 180 \
+            https://storage.googleapis.com/scperteval/processed/replogle22k562_processed_complete.h5ad \
+            -o data/K562_single_complete.h5ad
+          curl -L --fail --retry 12 --retry-all-errors --retry-delay 8 --connect-timeout 30 --speed-limit 1024 --speed-time 180 \
+            https://storage.googleapis.com/scperteval/processed/replogle22rpe1_processed_complete.h5ad \
+            -o data/RPE1_single_complete.h5ad
+          curl -L --fail --retry 12 --retry-all-errors --retry-delay 8 \
+            https://ndownloader.figshare.com/files/35773217 -o data/K562_bulk.h5ad
+          curl -L --fail --retry 12 --retry-all-errors --retry-delay 8 \
+            https://ndownloader.figshare.com/files/35775512 -o data/RPE1_bulk.h5ad
+          curl -L --fail --retry 8 --retry-all-errors \
+            https://raw.githubusercontent.com/broadinstitute/2022_PERISCOPE/17d345046beee46c8fa8601f970b66651232e7ed/common_files/CORUM_humanComplexes.txt \
+            -o data/CORUM_humanComplexes.txt
+          aws s3 sync --no-sign-request s3://czi-scgenept-public/models/pretrained/scgpt data/scgpt
+          aws s3 cp --no-sign-request \
+            's3://czi-scgenept-public/models/gene_embeddings/NCBI+UniProt_embeddings-gpt3.5-ada.pkl' \
+            'data/embeddings/NCBI+UniProt_embeddings-gpt3.5-ada.pkl'
+          aws s3 cp --no-sign-request \
+            's3://czi-scgenept-public/models/gene_embeddings/GO_C_gene_embeddings-gpt3.5-ada-concat.pickle' \
+            'data/embeddings/GO_C_gene_embeddings-gpt3.5-ada-concat.pickle'
+          sha256sum data/*.h5ad data/CORUM_humanComplexes.txt data/scgpt/* data/embeddings/* | tee results/INPUT_SHA256.txt
+          ls -lh data/*.h5ad data/scgpt/* data/embeddings/*
+
+      - name: Apply the frozen Round 19 reliability filter to pseudobulk
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import anndata as ad
+          import numpy as np
+          import pandas as pd
+          from scipy import sparse
+          report = {}
+          for source, target in [
+              (Path('data/K562_bulk.h5ad'), Path('data/K562_bulk_significant.h5ad')),
+              (Path('data/RPE1_bulk.h5ad'), Path('data/RPE1_bulk_significant.h5ad')),
+          ]:
+              a = ad.read_h5ad(source)
+              x = a.X.toarray() if sparse.issparse(a.X) else np.asarray(a.X)
+              finite = np.isfinite(x).all(axis=1)
+              p = pd.to_numeric(a.obs['energy_test_p_value'], errors='coerce').to_numpy(float)
+              significant = np.isfinite(p) & (p < 1e-3)
+              keep = finite & significant
+              report[source.name] = {
+                  'rows_before': int(a.n_obs),
+                  'finite_rows': int(finite.sum()),
+                  'significant_rows': int(significant.sum()),
+                  'rows_kept': int(keep.sum()),
+                  'rule': 'complete finite response row and energy_test_p_value < 0.001',
+              }
+              if keep.sum() < 200:
+                  raise RuntimeError(f'too few reliable rows: {source} {keep.sum()}')
+              a[keep].copy().write_h5ad(target, compression='gzip')
+          Path('results/PSEUDOBULK_FILTER.json').write_text(json.dumps(report, indent=2))
+          print(json.dumps(report, indent=2))
+          PY
+          rm data/K562_bulk.h5ad data/RPE1_bulk.h5ad
+
+      - name: Run real scGPT control-context gate
+        env:
+          PYTHONPATH: ${{ github.workspace }}/vendor/scGPT
+        run: |
+          set -euo pipefail
+          /usr/bin/time -v python tmp_round21/round21_scgpt_contextual.py \
+            --round20-base tmp_round21/round20_base.py \
+            --k562-bulk data/K562_bulk_significant.h5ad \
+            --rpe1-bulk data/RPE1_bulk_significant.h5ad \
+            --k562-single data/K562_single_complete.h5ad \
+            --rpe1-single data/RPE1_single_complete.h5ad \
+            --corum data/CORUM_humanComplexes.txt \
+            --embedding-dir data/embeddings \
+            --scgpt-dir data/scgpt \
+            --out results \
+            --control-cells 96 \
+            --max-length 384 \
+            --batch-size 4 \
+            --min-occurrences 3 \
+            --response-genes 2000 \
+            --variance-sample-rows 1200 \
+            --folds 5 \
+            --random-reps 20 \
+            --embedding-pcs 64 2>&1 | tee results/RUN_LOG.txt
+
+      - name: Record provenance and remove source/model payloads
+        if: always()
+        run: |
+          mkdir -p results
+          {
+            echo "commit=${GITHUB_SHA}"
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "runner=${RUNNER_OS}"
+            python --version || true
+            python -m pip freeze || true
+          } > results/PROVENANCE.txt
+          rm -rf data vendor
+          find results -type f -printf '%P %s bytes\n' | sort > results/RESULT_FILE_SIZES.txt || true
+          du -sh results || true
+
+      - name: Upload derived results only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: round21-scgpt-contextual-utilization
+          path: results/
+          if-no-files-found: error
+          retention-days: 14
