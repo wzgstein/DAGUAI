@@ -1,0 +1,31 @@
+name: Temporary Round 21 source export
+
+on:
+  push:
+    branches:
+      - tmp-round21-contextual-geneformer-20260827
+    paths:
+      - '.github/workflows/tmp-round21-source-export.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-round21-contextual-geneformer-20260827
+      - name: Reconstruct and verify source
+        run: |
+          mkdir -p export
+          cat round21_transport/r21_* | base64 --decode | gzip -dc > export/round21_contextual_geneformer.py
+          echo '67abed4e220abdf04034614c23c22659521d28746beb278f165a795d3d57ee83  export/round21_contextual_geneformer.py' | sha256sum -c -
+      - uses: actions/upload-artifact@v4
+        with:
+          name: round21-source
+          path: export/round21_contextual_geneformer.py
+          retention-days: 2
