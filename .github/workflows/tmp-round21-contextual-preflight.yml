@@ -1,4 +1,4 @@
-name: Temporary Round 21 contextual-data preflight
+name: Temporary Round 21 Geneformer contextual performance preflight
 
 on:
   push:
@@ -11,32 +11,194 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: tmp-round21-contextual-preflight-20260827
+  cancel-in-progress: true
+
 jobs:
   preflight:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 90
+    env:
+      OMP_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      NUMEXPR_NUM_THREADS: '2'
+      HF_HUB_DISABLE_TELEMETRY: '1'
+      PYTHONHASHSEED: '0'
     steps:
       - uses: actions/checkout@v4
         with:
           ref: tmp-round21-contextual-preflight-20260827
-      - name: Probe public single-cell objects
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install anndata h5py numpy pandas scipy huggingface_hub transformers safetensors
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Download K562 single-cell object and Geneformer V2
         run: |
           set -euo pipefail
+          mkdir -p data/geneformer results
+          curl -L --fail --retry 12 --retry-all-errors --retry-delay 8 \
+            --connect-timeout 30 --speed-limit 1024 --speed-time 180 \
+            https://storage.googleapis.com/scperteval/processed/replogle22k562_processed_complete.h5ad \
+            -o data/replogle22k562.h5ad
+          python - <<'PY'
+          from huggingface_hub import hf_hub_download
+          repo = 'ctheodoris/Geneformer'
+          files = [
+              'Geneformer-V2-104M/config.json',
+              'Geneformer-V2-104M/model.safetensors',
+              'geneformer/token_dictionary_gc104M.pkl',
+              'geneformer/gene_name_id_dict_gc104M.pkl',
+              'geneformer/gene_median_dictionary_gc104M.pkl',
+          ]
+          for name in files:
+              print(hf_hub_download(repo_id=repo, filename=name, local_dir='data/geneformer'))
+          PY
+          sha256sum data/replogle22k562.h5ad $(find data/geneformer -type f | sort) > results/SHA256.txt
+          ls -lh data/replogle22k562.h5ad data/geneformer/Geneformer-V2-104M/* data/geneformer/geneformer/*
+
+      - name: Inspect data and benchmark eight contextual forwards
+        run: |
+          python - <<'PY'
+          import json, pickle, time
+          from pathlib import Path
+          import anndata as ad
+          import numpy as np
+          import pandas as pd
+          from scipy import sparse
+          import torch
+          from transformers import BertForMaskedLM
+
+          torch.set_num_threads(2)
+          rng = np.random.default_rng(20260827)
+          source = Path('data/replogle22k562.h5ad')
+          a = ad.read_h5ad(source, backed='r')
+          obs = a.obs.copy()
+          var_names = a.var_names.astype(str).to_numpy()
+          if 'perturbation' not in obs:
+              raise RuntimeError('perturbation column absent')
+          control_idx = np.flatnonzero(obs['perturbation'].astype(str).to_numpy() == 'control')
+          selected = np.sort(rng.choice(control_idx, size=8, replace=False))
+          small = a[selected].to_memory()
+          a.file.close()
+          small.write_h5ad('results/K562_CONTROL_8.h5ad', compression='gzip')
+
+          with open('data/geneformer/geneformer/token_dictionary_gc104M.pkl','rb') as f:
+              token_dict = pickle.load(f)
+          with open('data/geneformer/geneformer/gene_name_id_dict_gc104M.pkl','rb') as f:
+              name_to_id = pickle.load(f)
+          with open('data/geneformer/geneformer/gene_median_dictionary_gc104M.pkl','rb') as f:
+              median_dict = pickle.load(f)
+
+          def resolve(symbol):
+              value = name_to_id.get(symbol) or name_to_id.get(symbol.upper())
+              values = value if isinstance(value, (list, tuple, set)) else [value]
+              for gid in values:
+                  if gid in token_dict and gid in median_dict:
+                      return gid
+              return None
+
+          mapped = []
+          mapped_cols = []
+          for j, symbol in enumerate(var_names):
+              gid = resolve(symbol)
+              if gid is not None:
+                  mapped_cols.append(j); mapped.append(gid)
+          mapped_cols = np.asarray(mapped_cols, dtype=int)
+          medians = np.asarray([float(median_dict[g]) for g in mapped], dtype=float)
+          tokens = np.asarray([int(token_dict[g]) for g in mapped], dtype=np.int64)
+          cls_id = int(token_dict['<cls>']); eos_id = int(token_dict['<eos>']); pad_id = int(token_dict['<pad>'])
+
+          X = small.X
+          if not sparse.issparse(X):
+              X = sparse.csr_matrix(X)
+          X = X.tocsr()[:, mapped_cols]
+          sequences = []
+          genes_by_seq = []
+          nonzero_counts = []
+          row_sum_expm1 = []
+          max_tokens = 512
+          for i in range(X.shape[0]):
+              row = X.getrow(i)
+              values = np.expm1(row.data.astype(float))
+              row_sum_expm1.append(float(values.sum()))
+              score = values / medians[row.indices]
+              order = np.argsort(-score)[:max_tokens-2]
+              idx = row.indices[order]
+              seq_tokens = np.concatenate([[cls_id], tokens[idx], [eos_id]]).astype(np.int64)
+              sequences.append(seq_tokens)
+              genes_by_seq.append([mapped[k] for k in idx])
+              nonzero_counts.append(int(row.nnz))
+
+          model_dir = 'data/geneformer/Geneformer-V2-104M'
+          start_load = time.perf_counter()
+          model = BertForMaskedLM.from_pretrained(model_dir, output_hidden_states=True)
+          model.eval()
+          load_seconds = time.perf_counter() - start_load
+
+          sums = {}; counts = {}
+          forward_times = []
+          with torch.no_grad():
+              for seq, genes in zip(sequences, genes_by_seq):
+                  ids = torch.tensor(seq[None, :], dtype=torch.long)
+                  mask = torch.ones_like(ids)
+                  t0 = time.perf_counter()
+                  out = model.bert(input_ids=ids, attention_mask=mask, output_hidden_states=True, return_dict=True)
+                  forward_times.append(time.perf_counter() - t0)
+                  h = out.hidden_states[-2][0, 1:-1].cpu().numpy()
+                  for gene, vec in zip(genes, h):
+                      if gene not in sums:
+                          sums[gene] = vec.astype(np.float64); counts[gene] = 1
+                      else:
+                          sums[gene] += vec; counts[gene] += 1
+
+          count_values = np.asarray(list(counts.values()))
+          report = {
+              'file_shape': list(small.shape),
+              'full_cell_count': int(len(obs)),
+              'control_cell_count': int(len(control_idx)),
+              'obs_columns': list(obs.columns),
+              'var_columns': list(small.var.columns),
+              'first_var_names': var_names[:20].tolist(),
+              'mapped_genes': int(len(mapped)),
+              'mapped_fraction': float(len(mapped) / len(var_names)),
+              'sampled_nonzero_genes': nonzero_counts,
+              'sampled_expm1_row_sums': row_sum_expm1,
+              'max_tokens': max_tokens,
+              'sequence_lengths': [int(len(x)) for x in sequences],
+              'model_load_seconds': load_seconds,
+              'forward_seconds_each': forward_times,
+              'forward_seconds_mean': float(np.mean(forward_times)),
+              'contextual_genes_observed': int(len(counts)),
+              'genes_seen_in_all_8': int(np.sum(count_values == 8)),
+              'genes_seen_at_least_4': int(np.sum(count_values >= 4)),
+              'torch_version': torch.__version__,
+          }
+          Path('results/CONTEXTUAL_PREFLIGHT.json').write_text(json.dumps(report, indent=2))
+          pd.DataFrame({'ensembl_id': list(counts), 'occurrences': list(counts.values())}).sort_values('occurrences', ascending=False).to_csv('results/CONTEXTUAL_GENE_OCCURRENCES.csv', index=False)
+          print(json.dumps(report, indent=2))
+          PY
+
+      - name: Record provenance and remove source data
+        if: always()
+        run: |
           mkdir -p results
-          for name in replogle22k562 replogle22rpe1; do
-            url="https://storage.googleapis.com/scperteval/processed/${name}_processed_complete.h5ad"
-            echo "===== ${name} HEAD =====" | tee -a results/PREFLIGHT.txt
-            curl -sSIL --fail "$url" | tee -a results/PREFLIGHT.txt
-            echo "===== ${name} RANGE =====" | tee -a results/PREFLIGHT.txt
-            curl -sSL --fail -r 0-0 -D - -o /dev/null "$url" | tee -a results/PREFLIGHT.txt
-            echo "===== ${name} JSON API =====" | tee -a results/PREFLIGHT.txt
-            encoded="processed%2F${name}_processed_complete.h5ad"
-            curl -sSL --fail "https://storage.googleapis.com/storage/v1/b/scperteval/o/${encoded}" | tee -a results/PREFLIGHT.txt
-            echo | tee -a results/PREFLIGHT.txt
-          done
-          df -h | tee results/DISK.txt
+          { echo "commit=${GITHUB_SHA}"; echo "run_id=${GITHUB_RUN_ID}"; python --version || true; python -m pip freeze || true; } > results/PROVENANCE.txt
+          rm -rf data
+          find results -type f -printf '%P %s bytes\n' | sort > results/RESULT_FILE_SIZES.txt || true
+
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: round21-contextual-preflight
           path: results/
-          retention-days: 2
+          if-no-files-found: error
+          retention-days: 3
