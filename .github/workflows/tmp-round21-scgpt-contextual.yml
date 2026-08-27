@@ -57,10 +57,16 @@ jobs:
           cat > vendor/scGPT/scgpt/model/__init__.py <<'PY'
           from .model import TransformerModel
           PY
-          curl -L --fail --retry 8 \
-            https://raw.githubusercontent.com/wzgstein/DAGUAI/9cc0bc29e73f6ce926b788d76cc08b36deb36d6e/tmp_round20/round20_static_utilization.py.gz.b64 \
-            -o tmp_round21/round20_base.py.gz.b64
-          base64 --decode tmp_round21/round20_base.py.gz.b64 | gzip -dc > tmp_round21/round20_base.py
+          mkdir -p /tmp/round20_transport
+          for i in 00 01 02 03; do
+            curl -L --fail --retry 8 \
+              "https://raw.githubusercontent.com/wzgstein/DAGUAI/9cc0bc29e73f6ce926b788d76cc08b36deb36d6e/round20_transport/part${i}" \
+              -o "/tmp/round20_transport/part${i}"
+          done
+          cat /tmp/round20_transport/part00 /tmp/round20_transport/part01 /tmp/round20_transport/part02 /tmp/round20_transport/part03 > /tmp/round20_source.b64
+          test "$(wc -c < /tmp/round20_source.b64)" -eq 15144
+          echo 'd89606a1e7c3a64053b2f4b0cc19a6ef73d5e48ab16c433041b8e5e4593eb8d1  /tmp/round20_source.b64' | sha256sum -c -
+          base64 --decode /tmp/round20_source.b64 | gzip -dc > tmp_round21/round20_base.py
           cat tmp_round21/contextual_transport/part* | base64 --decode | gzip -dc > tmp_round21/round21_scgpt_contextual.py
           echo '8ecb07bcb7f48d7b1bab4f9e05642e7b5a616bd114fd41812e13de5f25f2a171  tmp_round21/round20_base.py' | sha256sum -c -
           echo '128dd96a1748005717d1399ba94ffde4bfd41c435083c88b4e512c42f1dd0280  tmp_round21/round21_scgpt_contextual.py' | sha256sum -c -
