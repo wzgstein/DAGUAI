@@ -1,0 +1,42 @@
+name: Temporary Round 21 contextual-data preflight
+
+on:
+  push:
+    branches:
+      - tmp-round21-contextual-preflight-20260827
+    paths:
+      - '.github/workflows/tmp-round21-contextual-preflight.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-round21-contextual-preflight-20260827
+      - name: Probe public single-cell objects
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          for name in replogle22k562 replogle22rpe1; do
+            url="https://storage.googleapis.com/scperteval/processed/${name}_processed_complete.h5ad"
+            echo "===== ${name} HEAD =====" | tee -a results/PREFLIGHT.txt
+            curl -sSIL --fail "$url" | tee -a results/PREFLIGHT.txt
+            echo "===== ${name} RANGE =====" | tee -a results/PREFLIGHT.txt
+            curl -sSL --fail -r 0-0 -D - -o /dev/null "$url" | tee -a results/PREFLIGHT.txt
+            echo "===== ${name} JSON API =====" | tee -a results/PREFLIGHT.txt
+            encoded="processed%2F${name}_processed_complete.h5ad"
+            curl -sSL --fail "https://storage.googleapis.com/storage/v1/b/scperteval/o/${encoded}" | tee -a results/PREFLIGHT.txt
+            echo | tee -a results/PREFLIGHT.txt
+          done
+          df -h | tee results/DISK.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: round21-contextual-preflight
+          path: results/
+          retention-days: 2
