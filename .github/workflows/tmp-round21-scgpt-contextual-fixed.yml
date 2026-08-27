@@ -35,20 +35,30 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-      - name: Inject audited data-interface compatibility patch
+      - name: Inject audited compatibility patches
         run: |
           python - <<'PY'
           from pathlib import Path
           p = Path('round21_fixed/run.sh')
           s = p.read_text()
           needle = "python -m py_compile round21_fixed/round20_base.py round21_fixed/round21_scgpt_contextual.py\n"
-          patch = "python round21_fixed/patch_contextual_compat.py\npython -m py_compile round21_fixed/patch_contextual_compat.py\n"
+          patch = (
+              "python round21_fixed/patch_contextual_compat.py\n"
+              "python round21_fixed/patch_disable_nested.py\n"
+              "python -m py_compile round21_fixed/patch_contextual_compat.py round21_fixed/patch_disable_nested.py\n"
+          )
           if s.count(needle) != 1:
               raise RuntimeError(f'compile insertion point count={s.count(needle)}')
           p.write_text(s.replace(needle, patch + needle))
           PY
       - name: Run compatibility-fixed real contextual gate
         run: bash round21_fixed/run.sh
+      - name: Assert scientific outputs exist
+        if: success()
+        run: |
+          test -s results/KEY_FINDINGS.json
+          test -s results/COMBINED_SUMMARY.csv
+          test -s results/CROSS_LINE_SUMMARY.csv
       - name: Record provenance and remove biological/model payloads
         if: always()
         run: |
