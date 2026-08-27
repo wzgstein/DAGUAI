@@ -1,0 +1,67 @@
+name: Temporary Round 19 inspect pseudobulk contract
+
+on:
+  push:
+    branches:
+      - tmp-gene-tokenizer-round19-20260827
+    paths:
+      - '.github/workflows/tmp-round19-inspect-pseudobulk-20260827.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-gene-tokenizer-round19-20260827
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install anndata h5py numpy pandas scipy
+      - name: Download and inspect
+        run: |
+          set -euo pipefail
+          mkdir -p data results
+          curl -L --fail --retry 8 --retry-all-errors https://ndownloader.figshare.com/files/35780870 -o data/k562.h5ad
+          curl -L --fail --retry 8 --retry-all-errors https://ndownloader.figshare.com/files/35775512 -o data/rpe1.h5ad
+          python - <<'PY' | tee results/INSPECT.txt
+          import json
+          from pathlib import Path
+          import anndata as ad
+          import numpy as np
+          from scipy import sparse
+          out={}
+          for name,path in [('K562','data/k562.h5ad'),('RPE1','data/rpe1.h5ad')]:
+              a=ad.read_h5ad(path,backed='r')
+              rec={'shape':list(a.shape),'obs_columns':list(a.obs.columns),'var_columns':list(a.var.columns),'obs_names_head':a.obs_names[:20].astype(str).tolist(),'var_names_head':a.var_names[:20].astype(str).tolist(),'uns_keys':list(a.uns.keys()),'layers':list(a.layers.keys()),'obsm':list(a.obsm.keys())}
+              cols={}
+              for c in a.obs.columns:
+                  s=a.obs[c]
+                  vals=s.astype(str)
+                  cols[c]={'dtype':str(s.dtype),'nunique':int(vals.nunique()),'head':vals.head(20).tolist(),'top':vals.value_counts().head(20).to_dict()}
+              rec['obs']=cols
+              b=ad.read_h5ad(path)
+              x=b.X.toarray() if sparse.issparse(b.X) else np.asarray(b.X)
+              rec['X_summary']={'min':float(np.nanmin(x)),'max':float(np.nanmax(x)),'mean':float(np.nanmean(x)),'median':float(np.nanmedian(x)),'std':float(np.nanstd(x)),'row_mean_q':np.quantile(np.nanmean(x,axis=1),[0,.01,.1,.5,.9,.99,1]).tolist(),'col_mean_q':np.quantile(np.nanmean(x,axis=0),[0,.01,.1,.5,.9,.99,1]).tolist(),'zero_fraction':float(np.mean(x==0))}
+              for k,v in b.uns.items():
+                  try:
+                      rec.setdefault('uns_preview',{})[k]=str(v)[:1000]
+                  except Exception:
+                      pass
+              out[name]=rec
+          Path('results/INSPECT.json').write_text(json.dumps(out,indent=2))
+          print(json.dumps(out,indent=2))
+          PY
+          rm -rf data
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: round19-pseudobulk-contract
+          path: results/
+          if-no-files-found: error
+          retention-days: 7
