@@ -1,0 +1,128 @@
+name: Temporary Round 19 interventional availability gate
+
+on:
+  push:
+    branches:
+      - tmp-gene-tokenizer-round19-20260827
+    paths:
+      - '.github/workflows/tmp-gene-tokenizer-round19-20260827.yml'
+      - 'tmp_gene_tokenizer_round19/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-gene-tokenizer-round19-20260827
+  cancel-in-progress: true
+
+jobs:
+  interventional-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      OMP_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      NUMEXPR_NUM_THREADS: '2'
+      MPLBACKEND: Agg
+      PYTHONHASHSEED: '0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-gene-tokenizer-round19-20260827
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install and decode
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install anndata h5py numpy pandas scipy scikit-learn matplotlib
+          base64 --decode tmp_gene_tokenizer_round19/round19_interventional_availability.py.gz.b64 | gzip -dc > tmp_gene_tokenizer_round19/round19_interventional_availability.py
+          python -m py_compile tmp_gene_tokenizer_round19/round19_interventional_availability.py
+
+      - name: Resolve and download Replogle perturbation-level bulk profiles
+        run: |
+          set -euo pipefail
+          mkdir -p data results
+          curl -L --fail --retry 8 --retry-all-errors https://api.figshare.com/v2/articles/20029387 -o results/FIGSHARE_ARTICLE.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          meta = json.loads(Path('results/FIGSHARE_ARTICLE.json').read_text())
+          files = meta.get('files', [])
+          wanted = {
+              'k562': 'k562_essential_normalized_bulk_01.h5ad',
+              'rpe1': 'rpe1_normalized_bulk_01.h5ad',
+          }
+          selected = {}
+          for key, needle in wanted.items():
+              matches = [f for f in files if f.get('name', '').lower() == needle]
+              if not matches:
+                  matches = [f for f in files if needle.replace('_01.h5ad', '') in f.get('name', '').lower()]
+              if len(matches) != 1:
+                  raise SystemExit(f'{key}: expected one match for {needle}, found {[f.get("name") for f in matches]}')
+              selected[key] = matches[0]
+          Path('results/SELECTED_FIGSHARE_FILES.json').write_text(json.dumps(selected, indent=2))
+          with Path('data/downloads.tsv').open('w') as out:
+              for key, item in selected.items():
+                  out.write(f'{key}\t{item["download_url"]}\t{item["name"]}\t{item.get("size", "")}\t{item.get("supplied_md5", "")}\n')
+          print(json.dumps(selected, indent=2))
+          PY
+          while IFS=$'\t' read -r key url name size md5; do
+            echo "Downloading ${name} (${size} bytes)"
+            curl -L --fail --retry 12 --retry-all-errors --retry-delay 8 --connect-timeout 30 --speed-limit 1024 --speed-time 180 "$url" -o "data/${key}.h5ad"
+            test -s "data/${key}.h5ad"
+            sha256sum "data/${key}.h5ad" | tee -a results/DATA_SHA256.txt
+          done < data/downloads.tsv
+          ls -lh data/*.h5ad
+
+      - name: Download current NCBI human gene and GO annotations
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 10 --retry-all-errors https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/Mammalia/Homo_sapiens.gene_info.gz -o data/Homo_sapiens.gene_info.gz
+          curl -L --fail --retry 10 --retry-all-errors https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene2go.gz -o data/gene2go.gz
+          gzip -t data/Homo_sapiens.gene_info.gz
+          gzip -t data/gene2go.gz
+          gzip -dc data/Homo_sapiens.gene_info.gz > data/Homo_sapiens.gene_info
+          sha256sum data/Homo_sapiens.gene_info.gz data/gene2go.gz | tee results/ANNOTATION_SHA256.txt
+
+      - name: Run held-out-perturbation K562 to RPE1 gate
+        run: |
+          set -euo pipefail
+          /usr/bin/time -v python tmp_gene_tokenizer_round19/round19_interventional_availability.py \
+            --k562 data/k562.h5ad \
+            --rpe1 data/rpe1.h5ad \
+            --gene-info data/Homo_sapiens.gene_info \
+            --gene2go data/gene2go.gz \
+            --out results \
+            --n-targets 80 \
+            --context-size 15 \
+            --anchor-size 1200 \
+            --n-random 12 2>&1 | tee results/RUN_LOG.txt
+
+      - name: Record provenance and remove source data
+        if: always()
+        run: |
+          mkdir -p results
+          {
+            echo "commit=${GITHUB_SHA}"
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "runner=${RUNNER_OS}"
+            python --version || true
+            python -m pip freeze || true
+          } > results/PROVENANCE.txt
+          rm -rf data
+          find results -type f -printf '%P %s bytes\n' | sort > results/RESULT_FILE_SIZES.txt || true
+          du -sh results || true
+
+      - name: Upload derived results only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gene-tokenizer-round19-interventional-gate
+          path: results/
+          if-no-files-found: error
+          retention-days: 14
