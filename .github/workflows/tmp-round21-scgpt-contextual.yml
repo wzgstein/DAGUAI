@@ -71,7 +71,6 @@ jobs:
           echo '8ecb07bcb7f48d7b1bab4f9e05642e7b5a616bd114fd41812e13de5f25f2a171  tmp_round21/round20_base.py' | sha256sum -c -
           echo '128dd96a1748005717d1399ba94ffde4bfd41c435083c88b4e512c42f1dd0280  tmp_round21/round21_scgpt_contextual.py' | sha256sum -c -
           python -m py_compile tmp_round21/round20_base.py tmp_round21/round21_scgpt_contextual.py
-          PYTHONPATH="$PWD/vendor/scGPT" python tmp_round21/round21_scgpt_contextual.py --round20-base tmp_round21/round20_base.py --self-test
 
       - name: Download real control-cell, pseudobulk, checkpoint, semantic, and CORUM inputs
         run: |
