@@ -40,7 +40,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install anndata h5py numpy pandas scipy scikit-learn matplotlib
-          base64 --decode tmp_gene_tokenizer_round19/round19_interventional_availability.py.gz.b64 | gzip -dc > tmp_gene_tokenizer_round19/round19_interventional_availability.py
+          cat tmp_gene_tokenizer_round19/chunks/chunk_* > tmp_gene_tokenizer_round19/round19_interventional_availability.py.gz.b64.verified
+          base64 --decode tmp_gene_tokenizer_round19/round19_interventional_availability.py.gz.b64.verified | gzip -dc > tmp_gene_tokenizer_round19/round19_interventional_availability.py
           python -m py_compile tmp_gene_tokenizer_round19/round19_interventional_availability.py
           test "$(sha256sum tmp_gene_tokenizer_round19/round19_interventional_availability.py | cut -d' ' -f1)" = "b37922d7862453b0864e5b43783f01c395c2fed3ab86ba250663c9995151074a"
 
