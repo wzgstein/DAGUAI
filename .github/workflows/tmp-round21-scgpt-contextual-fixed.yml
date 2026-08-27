@@ -35,6 +35,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+      - name: Inject backed-H5AD sequential-slicing compatibility patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('round21_fixed/run.sh')
+          s = p.read_text()
+          needle = "python -m py_compile round21_fixed/round20_base.py round21_fixed/round21_scgpt_contextual.py\n"
+          patch = r'''python - <<'PY2'
+          from pathlib import Path
+          p = Path('round21_fixed/round21_scgpt_contextual.py')
+          s = p.read_text()
+          old = "    sub = a[control_idx, np.asarray(cols, dtype=int)].to_memory()\n"
+          new = "    sub = a[control_idx, :].to_memory()\n    sub = sub[:, np.asarray(cols, dtype=int)].copy()\n"
+          if s.count(old) != 1:
+              raise RuntimeError(f'expected one contextual subset expression, found {s.count(old)}')
+          p.write_text(s.replace(old, new))
+          print('patched contextual control-cell slicing for CSR/CSC backed matrices')
+          PY2
+          '''
+          if s.count(needle) != 1:
+              raise RuntimeError(f'compile insertion point count={s.count(needle)}')
+          p.write_text(s.replace(needle, patch + needle))
+          PY
       - name: Run compatibility-fixed real contextual gate
         run: bash round21_fixed/run.sh
       - name: Record provenance and remove biological/model payloads
