@@ -1,96 +1,69 @@
-# 大怪路子 (Da Guai Lu Zi)
+# Relation Availability and Utilization Audit for Single-Cell Foundation Models
 
-上海经典六人纸牌游戏 - 本地AI版
+> 中文摘要：本分支把原项目重构为一个**支持感知、干预落地、可归因**的审计框架。核心问题不是“哪个模型分数最高”，而是：关系信号是否存在、静态 token 是否可访问、contextual 计算是否带来增量、语义先验之后是否仍有剩余增量，以及这些结论能否在独立数据与污染校正后成立。
 
-## 游戏简介
+## Current decision
 
-大怪路子是一种流行于上海地区的扑克牌游戏，由6人参加，使用3副牌（162张）。玩家分为两队（红队1-3-5号位，蓝队2-4-6号位），目标是让己方三人全部先出完牌。
+The project continues as an audit, not as a new-tokenizer project.
 
-## 特色功能
+- **Interventional relation availability:** supported on the current development data.
+- **Narrow-support static accessibility:** supported for scGPT on the Round 23 intersection.
+- **Fixed contextual-over-static increment:** not supported at the current gate.
+- **Tokenizer/RMT training:** frozen until the preregistered confirmation gate passes.
 
-- **本地规则AI**: 无需网络，使用策略逻辑而非大模型
-- **4种难度级别**: 简单、普通、困难、专家
-- **完整规则实现**: 1/2/3/5路出牌、王牌百搭、将牌系统
-- **团队策略**: AI具备队友配合意识
-- **中文界面**: 原汁原味的上海牌局体验
+The governing comparison is nested rather than substitutive:
 
-## 如何开始
-
-直接在浏览器中打开 `index.html` 即可游戏。
-
-## 游戏规则
-
-### 牌型大小
-
-基础顺序: 3 < 4 < 5 < 6 < 7 < 8 < 9 < 10 < J < Q < K < A < 将牌 < 小王 < 大王
-
-### 四种牌路
-
-| 牌路 | 说明 |
-|------|------|
-| 1路 | 单张 |
-| 2路 | 对子（两张同点数） |
-| 3路 | 三张（三张同点数） |
-| 5路 | 五张组合牌 |
-
-### 5路牌型等级（从低到高）
-
-1. **顺子** - 五张连续牌（如 3-4-5-6-7）
-2. **同花** - 同花色五张牌
-3. **葫芦** - 三张+一对（如 AAA-KK）
-4. **炸弹** - 四张+一张（如 AAAA-K）
-5. **同花顺** - 同花色顺子
-6. **五根** - 五张同点数
-
-### 王牌规则
-
-- 大王和小王可作为百搭牌
-- 小王不能当大王使用
-- 大王可当小王使用（组成一对小王）
-
-### 胜负判定
-
-- 一方三人全部出完牌则该轮结束
-- 头家（第一个出完的人）所在队伍获胜
-- 得分 = 对方未出完人数（庄家易队时-1）
-
-## AI难度说明
-
-| 难度 | 特点 |
-|------|------|
-| 简单 | 随机出牌，偶尔放水 |
-| 普通 | 基本策略，会让队友 |
-| 困难 | 完整团队配合，手牌规划 |
-| 专家 | 深度分析，最优决策 |
-
-## AI策略要点
-
-- **队友配合**: 不压队友的牌，让队友保持出牌权
-- **危险感知**: 对手牌少时积极抢控制权
-- **送牌意识**: 队友快赢时出小牌配合
-- **牌型保护**: 避免拆散有用的对子/三张
-- **残局规划**: 考虑出牌后剩余牌能否一次出完
-
-## 技术栈
-
-- 纯前端实现（HTML + CSS + JavaScript）
-- 无需后端服务器
-- 无外部依赖（除Google Fonts）
-
-## 文件结构
-
-```
-DAGUAI/
-└── index.html    # 完整游戏（单文件）
+```text
+S       = static gene-token geometry
+S + V   = static geometry plus baseline-expression/value encoding
+S + V+C = static/value terms plus contextual transformation
+Q       = external semantic priors (for example GenePT / GO-C)
 ```
 
-## 浏览器兼容
+The decisive question is whether `C` improves held-out perturbation-response prediction after paying for `S`, `V`, and `Q` on the same support and split.
 
-- Chrome 80+
-- Firefox 75+
-- Safari 13+
-- Edge 80+
+## Repository map
 
-## License
+```text
+docs/PROJECT_CHARTER.md                 strategic scope and claim boundaries
+docs/ROUND23_INDEPENDENT_REANALYSIS.md  post-hoc complex-cluster audit
+docs/ROUND24_PREREGISTRATION.md         locked confirmation design
+config/round24_confirmation.yaml        machine-readable primary choices
+schema/experiment_manifest.schema.json  provenance/support/split contract
+src/relation_audit/                     reusable contracts, splits, metrics, inference
+scripts/reanalyze_round23.py            reproducible complex-level reanalysis
+tests/                                  leakage and inference unit tests
+results/round23_reanalysis/             frozen audit tables and verdict
+```
 
-MIT
+## Reproduce the Round 23 audit
+
+```bash
+python -m pip install -e '.[dev]'
+python scripts/reanalyze_round23.py \
+  --mask /path/to/mask-artifact/ALL_GENE_LEVEL_RESULTS.csv \
+  --zero /path/to/zero-artifact/ALL_GENE_LEVEL_RESULTS.csv \
+  --out /tmp/round23_reanalysis \
+  --bootstrap-reps 50000 \
+  --signflip-reps 50000
+pytest
+```
+
+The script treats the assigned CORUM complex as the outer resampling unit. This is an audit of the executed Round 23 object; it does not repair overlapping-complex membership retrospectively.
+
+## Non-claims
+
+This branch does **not** currently claim that:
+
+- scGPT contextual states are universally uninformative;
+- a perturbation-consensus pseudo-state is equivalent to an individual control cell;
+- CORUM partner averaging is a mathematical ceiling;
+- within-relation retrieval measures unseen-complex generalization;
+- a per-target oracle is a deployable representation selector;
+- a new tokenizer, RMT objective, or foundation model is warranted.
+
+## Decision rule
+
+Model training is reopened only if a representation and readout locked on development data show a positive, practically material contextual increment on both independent confirmation cell lines, survive relation-component inference and common-support analysis, and remain positive after semantic priors are included.
+
+See [`docs/ROUND24_PREREGISTRATION.md`](docs/ROUND24_PREREGISTRATION.md) for the full gate.
