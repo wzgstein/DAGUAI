@@ -1,0 +1,80 @@
+{
+  "experiment_id": "round23-mask-value-posthoc-complex-audit",
+  "stage": "sensitivity",
+  "truth_boundary": "Perturbation-consensus pseudo-state and mask-value target query; post-hoc assigned-complex audit, not individual control cells or preregistered confirmation.",
+  "source": {
+    "repository": "wzgstein/DAGUAI",
+    "commit": "f61bfd085bdb6c7d14a77c344d9861ca94aaa52d",
+    "dirty": false
+  },
+  "assets": [
+    {
+      "role": "code",
+      "name": "round23_scgpt_contextual.py",
+      "source": "GitHub Actions artifact 9685458311",
+      "version": "executed mask-value source",
+      "sha256": "6a6a02aac2ad3b8e88fb55572ae236c996dcc734b92ba8ad570affb240cb5dd6",
+      "bytes": 28514
+    },
+    {
+      "role": "result",
+      "name": "round23_mask_contextual_minus_static.csv",
+      "source": "independent post-hoc reanalysis",
+      "version": "v1",
+      "sha256": "cf03ee2ba86878e1e6cddf820594b15d6fcc70710b7e2d16b0aee2d0b60d36ce",
+      "bytes": 2630
+    }
+  ],
+  "support": {
+    "universe": "common",
+    "target_count": 91,
+    "target_sha256": "581377ff4c2a301588da0f9abfd086351eecd9b936e940815eb17de4808fd921",
+    "filter": "p<0.001 significant-only; 172-gene common covered pool; at least two CORUM partners",
+    "coverage_numerator": 91,
+    "coverage_denominator": 101
+  },
+  "split": {
+    "name": "five-fold gene KFold",
+    "unit": "target",
+    "group_definition": "assigned complex used for post-hoc inference only; partners allowed in training",
+    "fold_sha256": "0a90816888a424f9ee428bf02c4b0456a13251d94b3cb5070e7e5693819298e2",
+    "leakage_assertions_passed": false
+  },
+  "representations": [
+    {
+      "name": "SG_Static",
+      "model": "scGPT",
+      "layer": "embedding",
+      "readout": "gene token",
+      "dimension": 512,
+      "role": "static",
+      "locked": true
+    },
+    {
+      "name": "SG_D12",
+      "model": "scGPT",
+      "layer": 12,
+      "readout": "decoder",
+      "dimension": 512,
+      "role": "context",
+      "locked": true
+    },
+    {
+      "name": "GenePT",
+      "model": "GenePT",
+      "layer": "static",
+      "readout": "NCBI+UniProt",
+      "dimension": 1536,
+      "role": "semantic",
+      "locked": true
+    }
+  ],
+  "metrics": ["cosine_gain", "normalized_mse_gain"],
+  "inference": {
+    "cluster": "assigned_complex_id",
+    "bootstrap_repetitions": 50000,
+    "signflip_repetitions": 50000,
+    "seed": 20260828
+  },
+  "promotion_verdict": "fail"
+}
