@@ -54,6 +54,17 @@ jobs:
           echo '8ecb07bcb7f48d7b1bab4f9e05642e7b5a616bd114fd41812e13de5f25f2a171  tmp_round23/round20_static_utilization.py' | sha256sum -c -
           base64 --decode tmp_round23/round23_scgpt_contextual.py.gz.b64 | gzip -dc > tmp_round23/round23_scgpt_contextual.py
           echo '21cf80ce136b5f0552e29f16a9195792a95fd2bb1537fd23b4ce839948d0db0a  tmp_round23/round23_scgpt_contextual.py' | sha256sum -c -
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('tmp_round23/round23_scgpt_contextual.py')
+          s=p.read_text()
+          old='TransformerEncoder(layer, nlayers=nlayers)'
+          new='TransformerEncoder(layer, num_layers=nlayers)'
+          if s.count(old)!=1:
+              raise RuntimeError(f'expected exactly one registered constructor typo; found {s.count(old)}')
+          p.write_text(s.replace(old,new))
+          PY
+          echo '1639885b74e1a1f05f0ed1e641e92e25592cf54cffea74a8c8e6398c58ec762f  tmp_round23/round23_scgpt_contextual.py' | sha256sum -c -
           python -m py_compile tmp_round23/round20_static_utilization.py tmp_round23/round23_scgpt_contextual.py
 
       - name: Resolve and download Replogle response and raw-bulk files
