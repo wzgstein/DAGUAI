@@ -155,9 +155,11 @@ jobs:
           set -euo pipefail
           test "$(grep -c 'if len(common_pool) < 300:' tmp_round23/round23_scgpt_contextual.py)" -eq 1
           sed -i 's/if len(common_pool) < 300:/if len(common_pool) < 150:/' tmp_round23/round23_scgpt_contextual.py
-          python -m py_compile tmp_round23/round23_scgpt_contextual.py
-          sha256sum tmp_round23/round23_scgpt_contextual.py | tee results/EXECUTED_SOURCE_SHA256.txt
-          cp tmp_round23/round23_scgpt_contextual.py results/round23_scgpt_contextual.py
+          test "$(grep -c 'min_pool = 50 if line == "toy" else 300' tmp_round23/round20_static_utilization.py)" -eq 1
+          sed -i 's/min_pool = 50 if line == "toy" else 300/min_pool = 50 if line == "toy" else 150/' tmp_round23/round20_static_utilization.py
+          python -m py_compile tmp_round23/round20_static_utilization.py tmp_round23/round23_scgpt_contextual.py
+          sha256sum tmp_round23/round20_static_utilization.py tmp_round23/round23_scgpt_contextual.py | tee results/EXECUTED_SOURCE_SHA256.txt
+          cp tmp_round23/round20_static_utilization.py tmp_round23/round23_scgpt_contextual.py results/
           /usr/bin/time -v python tmp_round23/round23_scgpt_contextual.py \
             --round20-source tmp_round23/round20_static_utilization.py \
             --k562-response data/K562_significant.h5ad \
