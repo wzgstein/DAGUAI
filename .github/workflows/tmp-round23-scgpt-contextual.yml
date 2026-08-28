@@ -73,7 +73,7 @@ jobs:
               raise RuntimeError(f'expected one checkpoint conversion insertion point; found {s.count(needle)}')
           p.write_text(s.replace(needle,replacement))
           PY
-          echo '30f79b0bf7ae2f2484b2604188ff2599fb87bb89fd1a506a69152dedd4084e37  tmp_round23/round23_scgpt_contextual.py' | sha256sum -c -
+          echo '172205cf4f9603825c392d9b7583e1895258b6a11468005bb24f45c6446cf906  tmp_round23/round23_scgpt_contextual.py' | sha256sum -c -
           python -m py_compile tmp_round23/round20_static_utilization.py tmp_round23/round23_scgpt_contextual.py
 
       - name: Resolve and download Replogle response and raw-bulk files
