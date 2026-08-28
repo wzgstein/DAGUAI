@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Relation audit experiment manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "experiment_id",
+    "stage",
+    "truth_boundary",
+    "source",
+    "assets",
+    "support",
+    "split",
+    "representations",
+    "metrics",
+    "inference"
+  ],
+  "properties": {
+    "experiment_id": {"type": "string", "minLength": 1},
+    "stage": {"enum": ["development", "sensitivity", "confirmation"]},
+    "truth_boundary": {"type": "string", "minLength": 20},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commit", "dirty"],
+      "properties": {
+        "repository": {"type": "string"},
+        "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "dirty": {"type": "boolean"}
+      }
+    },
+    "assets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "name", "sha256", "bytes"],
+        "properties": {
+          "role": {"enum": ["data", "checkpoint", "embedding", "relation", "code", "result"]},
+          "name": {"type": "string"},
+          "source": {"type": "string"},
+          "version": {"type": "string"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "bytes": {"type": "integer", "minimum": 0},
+          "publication_date": {"type": "string", "format": "date"},
+          "license_note": {"type": "string"}
+        }
+      }
+    },
+    "support": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["universe", "target_count", "target_sha256", "filter"],
+      "properties": {
+        "universe": {"enum": ["common", "model_native", "union"]},
+        "target_count": {"type": "integer", "minimum": 1},
+        "target_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "filter": {"type": "string"},
+        "coverage_numerator": {"type": "integer", "minimum": 0},
+        "coverage_denominator": {"type": "integer", "minimum": 1}
+      }
+    },
+    "split": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "unit", "group_definition", "fold_sha256", "leakage_assertions_passed"],
+      "properties": {
+        "name": {"type": "string"},
+        "unit": {"enum": ["target", "relation_component", "cell_line", "study", "donor"]},
+        "group_definition": {"type": "string"},
+        "fold_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "leakage_assertions_passed": {"type": "boolean"}
+      }
+    },
+    "representations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "model", "layer", "readout", "dimension", "role", "locked"],
+        "properties": {
+          "name": {"type": "string"},
+          "model": {"type": "string"},
+          "layer": {"type": ["integer", "string"]},
+          "readout": {"type": "string"},
+          "dimension": {"type": "integer", "minimum": 1},
+          "role": {"enum": ["semantic", "static", "value", "context", "null"]},
+          "locked": {"type": "boolean"}
+        }
+      }
+    },
+    "metrics": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "inference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cluster", "bootstrap_repetitions", "signflip_repetitions", "seed"],
+      "properties": {
+        "cluster": {"type": "string"},
+        "bootstrap_repetitions": {"type": "integer", "minimum": 1000},
+        "signflip_repetitions": {"type": "integer", "minimum": 1000},
+        "seed": {"type": "integer"}
+      }
+    },
+    "promotion_verdict": {"enum": ["pass", "fail", "not_evaluated"]}
+  }
+}
