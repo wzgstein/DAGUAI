@@ -1,0 +1,20 @@
+claim_id,claim,status,evidence,boundary_or_action
+C01,任务/operator 特异性决定表示价值,SURVIVES,Round14–15b controlled gates,仅为任务条件性，不是生物机制
+C02,弱 anchor 下 observational context gain 代表关系学习,KILLED,Round18 anchor ladder/full-anchor low-state,强状态付款后衰减或反转
+C03,CORUM 伙伴迁移 rank-paid perturbation residual,SURVIVES,Round19 K562/RPE1 + complex level,perturbation pseudobulk；无 donor population inference
+C04,GenePT/GO-C 静态语义能利用当前关系信号,SURVIVES,Round20–23,可能有 CORUM/功能知识源重叠
+C05,scGPT 静态利用普遍接近零,REVISED,Round20 broad support vs Round23 decoupled narrow support,改为 support-sensitive moderate on narrow pool
+C06,scGPT fixed contextual/zero/mask 超过 static,FAILED_CURRENT_GATE,Round23 zero and mask artifacts,仅针对 pseudo-state/token-value gate
+C07,Geneformer pseudo-contextual 可竞争语义先验,FAILED_CURRENT_GATE,Round22,exact native endpoint 未决
+C08,CORUM partner mean 是数学 ceiling,KILLED,Round23 GenePT K562 > reference,必须改称 partner reference
+C09,per-gene oracle 可作为模型 promotion,PROHIBITED,Round22–23 decision rules,事后选择，强乐观
+C10,当前证据足以训练新 tokenizer,KILLED_FOR_NOW,Round18–23,方法必要性未建立
+C11,target exposure imbalance 导致 utilization gap,UNRESOLVED,Round16 scaffold only,需真实 exposure-gap link
+C12,RMT 对当前主问题必要,UNRESOLVED/PARKED,Project G state + Round21,标准 paired/cluster inference 尚足够
+C13,current endpoint tests unseen biological complexes,FALSE,Round23 gene KFold,当前 raw-KNN 估计的是伙伴可用的 within-relation interpolation；component-held-out 只适用于 learned generalization 轨道
+C14,Round23 target-value intervention 等同 biological knockout,FALSE,Round23 truth boundary,只是模型输入 query
+C15,Round23 窄共同支持上 scGPT static geometry 对 matched random 有正增益,SURVIVES_POSTHOC,"38-complex cluster bootstrap: gain 0.0353; 95% CI [0.0169, 0.0579]",仅 172 covered genes / 91 evaluated targets / 38 assigned complexes
+C16,固定 scGPT contextual readout 在 Round23 超过同模型 static token table,KILLED_CURRENT_GATE,所有 mask/zero contextual-minus-static equal-complex means < 0；无一 95% CI 全部为正,需 control-cell state、fold-pure construction 和独立数据后才可重开
+C17,zero-value 与 mask-value 选择会改变 Round23 总体结论,NOT_SUPPORTED,对应 readout 的 mask-minus-zero cluster CI 均跨 0,局部基因可变化；总体结论稳定
+C18,Round23 pseudo-state 对外层测试目标完全 fold-pure,FALSE,consensus 使用全部 perturbation raw pseudobulk；response-gene variance selection 也为全局,Round24 使用 control cells 与 fold-pure response transforms
+C19,CORUM ceiling 是模型利用率的数学上界,FALSE,GenePT 在部分条件超过所谓 ceiling；ratio 可大于 1,统一改名 CORUM partner reference；headline 报 raw paired gain 与 cluster CI
