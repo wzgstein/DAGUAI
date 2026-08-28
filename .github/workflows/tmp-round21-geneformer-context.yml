@@ -1,0 +1,194 @@
+name: Temporary Round 21 Geneformer contextual utilization gate
+
+on:
+  push:
+    branches:
+      - tmp-round21-geneformer-context-20260828
+    paths:
+      - '.github/workflows/tmp-round21-geneformer-context.yml'
+      - 'tmp_round21/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-round21-geneformer-context-20260828
+  cancel-in-progress: true
+
+jobs:
+  contextual-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      OMP_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      NUMEXPR_NUM_THREADS: '2'
+      TOKENIZERS_PARALLELISM: 'false'
+      HF_HUB_DISABLE_TELEMETRY: '1'
+      MPLBACKEND: Agg
+      PYTHONHASHSEED: '0'
+    steps:
+      - name: Checkout isolated branch
+        uses: actions/checkout@v4
+        with:
+          ref: tmp-round21-geneformer-context-20260828
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install CPU analysis stack and reconstruct sources
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install anndata h5py numpy pandas scipy scikit-learn matplotlib tabulate safetensors huggingface_hub awscli 'transformers==4.46.3'
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          mkdir -p analysis results
+          base64 --decode tmp_round21/round21_geneformer_contextual.py.gz.b64 | gzip -dc > analysis/round21_geneformer_contextual.py
+          echo '620acc2b43cdafff20fef996f31dfe32503e37cdd40b11c8e95e003a5e06f79d  analysis/round21_geneformer_contextual.py' | sha256sum -c -
+          curl -L --fail --retry 8 --retry-all-errors \
+            https://raw.githubusercontent.com/wzgstein/DAGUAI/9cc0bc29e73f6ce926b788d76cc08b36deb36d6e/tmp_round20/round20_static_utilization.py.gz.b64 \
+            -o /tmp/round20.b64
+          base64 --decode /tmp/round20.b64 | gzip -dc > analysis/round20_static_utilization.py
+          echo '8ecb07bcb7f48d7b1bab4f9e05642e7b5a616bd114fd41812e13de5f25f2a171  analysis/round20_static_utilization.py' | sha256sum -c -
+          python -m py_compile analysis/round20_static_utilization.py analysis/round21_geneformer_contextual.py
+
+      - name: Download perturbation response matrices and CORUM
+        run: |
+          set -euo pipefail
+          mkdir -p data/embeddings data/geneformer data/singlecell
+          curl -L --fail --retry 12 --retry-all-errors --retry-delay 8 \
+            https://ndownloader.figshare.com/files/35773217 -o data/K562_raw.h5ad
+          curl -L --fail --retry 12 --retry-all-errors --retry-delay 8 \
+            https://ndownloader.figshare.com/files/35775512 -o data/RPE1_raw.h5ad
+          curl -L --fail --retry 8 --retry-all-errors --retry-delay 8 \
+            https://raw.githubusercontent.com/broadinstitute/2022_PERISCOPE/17d345046beee46c8fa8601f970b66651232e7ed/common_files/CORUM_humanComplexes.txt \
+            -o data/humanComplexes.txt
+          sha256sum data/K562_raw.h5ad data/RPE1_raw.h5ad data/humanComplexes.txt | tee results/PRIMARY_DATA_SHA256.txt
+
+      - name: Freeze significant perturbation population
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import anndata as ad
+          import numpy as np
+          import pandas as pd
+          from scipy import sparse
+          report = {}
+          for src, dst in [
+              (Path('data/K562_raw.h5ad'), Path('data/K562_significant.h5ad')),
+              (Path('data/RPE1_raw.h5ad'), Path('data/RPE1_significant.h5ad')),
+          ]:
+              a = ad.read_h5ad(src)
+              x = a.X.toarray() if sparse.issparse(a.X) else np.asarray(a.X)
+              finite = np.isfinite(x).all(axis=1)
+              p = pd.to_numeric(a.obs['energy_test_p_value'], errors='coerce').to_numpy(float)
+              keep = finite & np.isfinite(p) & (p < 1e-3)
+              if keep.sum() < 200:
+                  raise RuntimeError(f'too few retained rows for {src}: {keep.sum()}')
+              report[src.name] = {
+                  'rows_before': int(a.n_obs),
+                  'rows_finite': int(finite.sum()),
+                  'rows_kept': int(keep.sum()),
+                  'rule': 'all response coordinates finite and energy_test_p_value < 0.001',
+              }
+              a[keep].copy().write_h5ad(dst, compression='gzip')
+          Path('results/SIGNIFICANT_ROW_FILTER.json').write_text(json.dumps(report, indent=2))
+          print(json.dumps(report, indent=2))
+          PY
+          rm data/K562_raw.h5ad data/RPE1_raw.h5ad
+
+      - name: Download trimmed single-cell control datasets
+        run: |
+          set -euo pipefail
+          for name in replogle22k562 replogle22rpe1; do
+            url="https://storage.googleapis.com/scperteval/processed/${name}_processed_complete.h5ad"
+            curl -sI "$url" | tee "results/${name}_HEADERS.txt" || true
+            curl -L --fail --retry 12 --retry-all-errors --retry-delay 8 \
+              --connect-timeout 30 --speed-limit 1024 --speed-time 180 \
+              "$url" -o "data/singlecell/${name}.h5ad"
+            test -s "data/singlecell/${name}.h5ad"
+          done
+          ls -lh data/singlecell | tee results/SINGLECELL_FILE_SIZES.txt
+          sha256sum data/singlecell/*.h5ad > results/SINGLECELL_SHA256.txt
+
+      - name: Download Geneformer V2 and semantic baselines
+        run: |
+          set -euo pipefail
+          aws s3 cp --no-sign-request \
+            's3://czi-scgenept-public/models/gene_embeddings/NCBI+UniProt_embeddings-gpt3.5-ada.pkl' \
+            'data/embeddings/NCBI+UniProt_embeddings-gpt3.5-ada.pkl'
+          aws s3 cp --no-sign-request \
+            's3://czi-scgenept-public/models/gene_embeddings/GO_C_gene_embeddings-gpt3.5-ada-concat.pickle' \
+            'data/embeddings/GO_C_gene_embeddings-gpt3.5-ada-concat.pickle'
+          python - <<'PY'
+          from huggingface_hub import hf_hub_download
+          repo = 'ctheodoris/Geneformer'
+          names = [
+              'Geneformer-V2-104M/config.json',
+              'Geneformer-V2-104M/model.safetensors',
+              'geneformer/token_dictionary_gc104M.pkl',
+              'geneformer/gene_median_dictionary_gc104M.pkl',
+              'geneformer/gene_name_id_dict_gc104M.pkl',
+          ]
+          for name in names:
+              print(hf_hub_download(repo_id=repo, filename=name, local_dir='data/geneformer'))
+          PY
+          find data/embeddings data/geneformer -type f -printf '%P %s bytes\n' | sort | tee results/MODEL_FILES.txt
+          sha256sum $(find data/embeddings data/geneformer -type f | sort) > results/MODEL_SHA256.txt
+
+      - name: Extract contextual states and run held-out response gate
+        run: |
+          set -euo pipefail
+          /usr/bin/time -v python analysis/round21_geneformer_contextual.py \
+            --singlecell-k562 data/singlecell/replogle22k562.h5ad \
+            --singlecell-rpe1 data/singlecell/replogle22rpe1.h5ad \
+            --pseudobulk-k562 data/K562_significant.h5ad \
+            --pseudobulk-rpe1 data/RPE1_significant.h5ad \
+            --corum data/humanComplexes.txt \
+            --geneformer-repo data/geneformer \
+            --embedding-dir data/embeddings \
+            --round20-source analysis/round20_static_utilization.py \
+            --out results \
+            --control-cells 96 \
+            --max-seq-len 1536 \
+            --batch-size 2 \
+            --layers 4,8,11,12 \
+            --primary-layer 11 \
+            --min-occurrences 2 \
+            --response-genes 2000 \
+            --variance-sample-rows 1200 \
+            --rank-paid 200 \
+            --folds 5 \
+            --random-reps 10 \
+            --min-partners 2 \
+            --max-partners 8 \
+            --embedding-pcs 64 2>&1 | tee results/RUN_LOG.txt
+
+      - name: Record provenance and remove biological/model source files
+        if: always()
+        run: |
+          mkdir -p results
+          {
+            echo "commit=${GITHUB_SHA}"
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "runner=${RUNNER_OS}"
+            python --version || true
+            python -m pip freeze || true
+          } > results/PROVENANCE.txt
+          rm -rf data
+          find results -type f -printf '%P %s bytes\n' | sort > results/RESULT_FILE_SIZES.txt || true
+          du -sh results || true
+
+      - name: Upload derived contextual-gate results only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: round21-geneformer-contextual-utilization
+          path: results/
+          if-no-files-found: error
+          retention-days: 14
