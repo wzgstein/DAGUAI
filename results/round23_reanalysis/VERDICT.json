@@ -1,0 +1,11 @@
+{
+  "stage": "post_hoc_audit",
+  "n_target_line_rows": 182,
+  "n_targets_per_line": 91,
+  "n_assigned_complexes": 38,
+  "static_accessibility_positive": true,
+  "any_mask_context_ci_lower_above_zero": false,
+  "any_zero_context_ci_lower_above_zero": false,
+  "contextual_promotion": "fail",
+  "truth_boundary": "Round 23 perturbation-consensus pseudo-state and target-value query; post-hoc assigned-complex cluster audit, not preregistered confirmation."
+}
