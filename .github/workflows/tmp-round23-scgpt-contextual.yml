@@ -61,10 +61,19 @@ jobs:
           old='TransformerEncoder(layer, nlayers=nlayers)'
           new='TransformerEncoder(layer, num_layers=nlayers)'
           if s.count(old)!=1:
-              raise RuntimeError(f'expected exactly one registered constructor typo; found {s.count(old)}')
-          p.write_text(s.replace(old,new))
+              raise RuntimeError(f'expected exactly one constructor typo; found {s.count(old)}')
+          s=s.replace(old,new)
+          needle='    state = extract_state(model_dir / "best_model.pt")\n'
+          replacement=(
+              '    state = extract_state(model_dir / "best_model.pt")\n'
+              '    # Convert FlashMHA fused QKV checkpoint names to PyTorch MHA.\n'
+              '    state = {k.replace("Wqkv.", "in_proj_"): v for k, v in state.items()}\n'
+          )
+          if s.count(needle)!=1:
+              raise RuntimeError(f'expected one checkpoint conversion insertion point; found {s.count(needle)}')
+          p.write_text(s.replace(needle,replacement))
           PY
-          echo '1639885b74e1a1f05f0ed1e641e92e25592cf54cffea74a8c8e6398c58ec762f  tmp_round23/round23_scgpt_contextual.py' | sha256sum -c -
+          echo '30f79b0bf7ae2f2484b2604188ff2599fb87bb89fd1a506a69152dedd4084e37  tmp_round23/round23_scgpt_contextual.py' | sha256sum -c -
           python -m py_compile tmp_round23/round20_static_utilization.py tmp_round23/round23_scgpt_contextual.py
 
       - name: Resolve and download Replogle response and raw-bulk files
