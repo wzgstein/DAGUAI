@@ -1,0 +1,88 @@
+project:
+  name: relation-utilization-audit
+  round: 24
+  mode: confirmation
+  frozen_training_routes: [new_tokenizer, rmt_objective, end_to_end_finetuning]
+
+data:
+  development:
+    - {id: replogle22k562, cell_line: K562}
+    - {id: replogle22rpe1, cell_line: RPE1}
+  confirmation:
+    - {id: nadig25hepg2, cell_line: HepG2}
+    - {id: nadig25jurkat, cell_line: Jurkat}
+  primary_target_filter: all_finite
+  minimum_cells_per_perturbation: 30
+  control_state:
+    source: annotated_control_cells_only
+    statistic: median
+  response_feature_policy: identifier_intersection_without_effect_based_selection
+
+support:
+  primary: common_support
+  required_blocks: [scgpt_static, scgpt_h00, scgpt_d12, genept, go_c, corum]
+  minimum_relation_partners: 2
+  emit_target_hash_before_scoring: true
+  secondary:
+    - model_native_support
+    - significant_only_p_lt_1e-3
+    - control_expression_strata
+    - relation_degree_strata
+
+relations:
+  primary_source: CORUM
+  retain_all_memberships: true
+  group_definition: bipartite_gene_complex_connected_components
+
+representations:
+  primary_model: scgpt_whole_human_round23_checkpoint
+  static_block: S
+  value_block: H00_minus_S
+  context_block: D12_minus_H00
+  semantic_blocks: [GenePT_NCBI_UniProt, GO_C]
+  primary_query_value: observed_control_value
+  sensitivity_query_values: [mask_value_minus_1, zero]
+  secondary_context_block: H03_minus_H00
+  block_scaling: unit_expected_squared_norm_on_training_targets
+
+response_payment:
+  primary_rank: 200
+  sensitivity_ranks: [50, 100, 400]
+  fit_scope: outer_training_rows_only
+  feature_scaling_scope: outer_training_rows_only
+
+evaluation:
+  availability_track:
+    split: leave_target_out_with_partners_allowed
+    inference_cluster: relation_component
+    random_repetitions: 100
+  promotion_track:
+    split: relation_component_group_kfold
+    outer_folds: 5
+    inner_folds: 4
+    model: ridge
+    alpha_grid: [0.0001, 0.001, 0.01, 0.1, 1.0, 10.0, 100.0, 1000.0]
+    nested_blocks:
+      B0: [S]
+      B1: [S, V]
+      B2: [S, V, C]
+      B3: [Q]
+      B4: [Q, S, V]
+      B5: [Q, S, V, C]
+
+inference:
+  primary_metric: cosine_gain
+  primary_contrast: B5_minus_B4
+  bootstrap_repetitions: 50000
+  signflip_repetitions: 50000
+  seed: 20260828
+  cluster_equal_weighting: true
+
+promotion_gate:
+  require_each_confirmation_line: true
+  availability_ci_lower_gt: 0.0
+  static_null_ci_lower_gt: 0.0
+  context_ci_lower_gt: 0.0
+  equal_line_context_point_estimate_gte: 0.01
+  require_sensitivity_sign_stability: true
+  allow_oracle_promotion: false
