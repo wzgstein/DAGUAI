@@ -1,0 +1,207 @@
+name: Temporary Round 23 scGPT mask-value decoupled gate
+
+on:
+  push:
+    branches:
+      - tmp-round23-scgpt-contextual-20260828
+    paths:
+      - '.github/workflows/tmp-round23-scgpt-mask-decoupled.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-round23-scgpt-mask-decoupled-20260828
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      OMP_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      NUMEXPR_NUM_THREADS: '2'
+      MPLBACKEND: Agg
+      PYTHONHASHSEED: '0'
+      HF_HUB_DISABLE_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-round23-scgpt-contextual-20260828
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install and reconstruct audited evaluators
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install anndata h5py numpy pandas scipy scikit-learn matplotlib tabulate awscli requests
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          mkdir -p tmp_round23 data/embeddings data/scgpt results
+          base='https://raw.githubusercontent.com/wzgstein/DAGUAI/9cc0bc29e73f6ce926b788d76cc08b36deb36d6e'
+          for part in part00 part01 part02 part03; do
+            curl -L --fail --retry 8 "$base/round20_transport/$part" -o "/tmp/$part"
+          done
+          cat /tmp/part00 /tmp/part01 /tmp/part02 /tmp/part03 | base64 --decode | gzip -dc > tmp_round23/round20_static_utilization.py
+          echo '8ecb07bcb7f48d7b1bab4f9e05642e7b5a616bd114fd41812e13de5f25f2a171  tmp_round23/round20_static_utilization.py' | sha256sum -c -
+          base64 --decode tmp_round23/round23_scgpt_contextual.py.gz.b64 | gzip -dc > tmp_round23/round23_scgpt_contextual.py
+          echo '21cf80ce136b5f0552e29f16a9195792a95fd2bb1537fd23b4ce839948d0db0a  tmp_round23/round23_scgpt_contextual.py' | sha256sum -c -
+          base64 --decode tmp_round23/round23_small_coverage_wrapper.py.gz.b64 | gzip -dc > tmp_round23/round23_small_coverage_wrapper.py
+          echo '42cd8414aa4ac4c8a1c2c05593518b0794862530aa40b7661d47f6e0552b549a  tmp_round23/round23_small_coverage_wrapper.py' | sha256sum -c -
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('tmp_round23/round23_scgpt_contextual.py')
+          s=p.read_text()
+          replacements=[
+              ('TransformerEncoder(layer, nlayers=nlayers)', 'TransformerEncoder(layer, num_layers=nlayers)'),
+              ('if len(common_pool) < 300:', 'if len(common_pool) < 150:'),
+              ('bval[i, pos[gene]] = 0.0', 'bval[i, pos[gene]] = -1.0'),
+              ('zero_value_readouts', 'mask_value_readouts'),
+              ('SG_CLSZ', 'SG_CLSM'),
+              ('SG_MEANZ', 'SG_MEANM'),
+              ('SG_DECZ', 'SG_DECM'),
+              ('SG_TARGETZ', 'SG_TARGETM'),
+              ('zero-value token intervention', 'mask-value target-query intervention'),
+              ('set target expression value to zero while retaining its gene token', 'set target expression value to mask_value=-1 while retaining its gene token'),
+          ]
+          for old,new in replacements:
+              if old not in s:
+                  raise RuntimeError(f'missing patch target: {old!r}')
+              s=s.replace(old,new)
+          needle='    state = extract_state(model_dir / "best_model.pt")\n'
+          replacement=(
+              '    state = extract_state(model_dir / "best_model.pt")\n'
+              '    state = {k.replace("Wqkv.", "in_proj_"): v for k, v in state.items()}\n'
+          )
+          if s.count(needle)!=1:
+              raise RuntimeError('checkpoint conversion insertion point changed')
+          p.write_text(s.replace(needle,replacement))
+          PY
+          python -m py_compile tmp_round23/*.py
+          sha256sum tmp_round23/*.py | tee results/EXECUTED_SOURCE_SHA256.txt
+          cp tmp_round23/*.py results/
+
+      - name: Resolve and download perturbation inputs
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, requests
+          from pathlib import Path
+          meta=requests.get('https://api.figshare.com/v2/articles/20029387',timeout=120).json()
+          Path('results/FIGSHARE_ARTICLE_METADATA.json').write_text(json.dumps(meta,indent=2))
+          wanted={
+              'K562_response':'K562_gwps_normalized_bulk_01.h5ad',
+              'RPE1_response':'rpe1_normalized_bulk_01.h5ad',
+              'K562_raw':'K562_gwps_raw_bulk_01.h5ad',
+              'RPE1_raw':'rpe1_raw_bulk_01.h5ad',
+          }
+          files={str(f['name']).lower():f for f in meta.get('files',[])}
+          report={}
+          for key,name in wanted.items():
+              f=files.get(name.lower())
+              if f is None:
+                  matches=[v for k,v in files.items() if name.lower().replace('_01','') in k]
+                  if len(matches)!=1:
+                      raise RuntimeError(f'cannot resolve {name}: {[(x.get("name"),x.get("id")) for x in matches]}')
+                  f=matches[0]
+              dest=Path('data')/f'{key}.h5ad'
+              with requests.get(f['download_url'],stream=True,timeout=300) as r:
+                  r.raise_for_status()
+                  with dest.open('wb') as out:
+                      for chunk in r.iter_content(8*1024*1024):
+                          if chunk: out.write(chunk)
+              if dest.stat().st_size != int(f['size']):
+                  raise RuntimeError(f'size mismatch for {key}')
+              report[key]={'name':f['name'],'id':f['id'],'size':dest.stat().st_size,'md5':f.get('supplied_md5')}
+          Path('results/RESOLVED_FIGSHARE_FILES.json').write_text(json.dumps(report,indent=2))
+          PY
+          sha256sum data/*.h5ad | tee results/PRIMARY_DATA_SHA256.txt
+
+      - name: Freeze significant finite response population
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import anndata as ad
+          import numpy as np
+          import pandas as pd
+          from scipy import sparse
+          report={}
+          for key in ['K562','RPE1']:
+              src=Path('data')/f'{key}_response.h5ad'
+              dst=Path('data')/f'{key}_significant.h5ad'
+              a=ad.read_h5ad(src)
+              x=a.X.toarray() if sparse.issparse(a.X) else np.asarray(a.X)
+              finite=np.isfinite(x).all(axis=1)
+              p=pd.to_numeric(a.obs['energy_test_p_value'],errors='coerce').to_numpy(float)
+              keep=finite & np.isfinite(p) & (p<1e-3)
+              if keep.sum()<200: raise RuntimeError(f'{key}: only {keep.sum()} retained rows')
+              a[keep].copy().write_h5ad(dst,compression='gzip')
+              report[key]={'rows_before':int(a.n_obs),'finite':int(finite.sum()),'kept':int(keep.sum())}
+          Path('results/SIGNIFICANT_ROW_FILTER.json').write_text(json.dumps(report,indent=2))
+          PY
+          rm data/K562_response.h5ad data/RPE1_response.h5ad
+
+      - name: Download CORUM, semantic priors, and scGPT
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 8 https://raw.githubusercontent.com/broadinstitute/2022_PERISCOPE/17d345046beee46c8fa8601f970b66651232e7ed/common_files/CORUM_humanComplexes.txt -o data/humanComplexes.txt
+          aws s3 cp --no-sign-request 's3://czi-scgenept-public/models/gene_embeddings/NCBI+UniProt_embeddings-gpt3.5-ada.pkl' data/embeddings/NCBI+UniProt_embeddings-gpt3.5-ada.pkl
+          aws s3 cp --no-sign-request 's3://czi-scgenept-public/models/gene_embeddings/GO_C_gene_embeddings-gpt3.5-ada-concat.pickle' data/embeddings/GO_C_gene_embeddings-gpt3.5-ada_avg.pickle
+          aws s3 sync --no-sign-request s3://czi-scgenept-public/models/pretrained/scgpt data/scgpt
+          find data/scgpt data/embeddings -type f -printf '%P %s bytes\n' | sort | tee results/ASSET_FILES.txt
+          sha256sum data/humanComplexes.txt $(find data/scgpt data/embeddings -type f | sort) > results/ASSET_SHA256.txt
+          cat data/scgpt/args.json | tee results/SCGPT_ARGS.json
+
+      - name: Run mask-value decoupled rank-200 scGPT gate
+        run: |
+          set -euo pipefail
+          /usr/bin/time -v python tmp_round23/round23_small_coverage_wrapper.py \
+            tmp_round23/round23_scgpt_contextual.py \
+            --round20-source tmp_round23/round20_static_utilization.py \
+            --k562-response data/K562_significant.h5ad \
+            --rpe1-response data/RPE1_significant.h5ad \
+            --k562-raw data/K562_raw.h5ad \
+            --rpe1-raw data/RPE1_raw.h5ad \
+            --corum data/humanComplexes.txt \
+            --embedding-dir data/embeddings \
+            --scgpt-dir data/scgpt \
+            --out results \
+            --seq-len 1200 \
+            --response-genes 2000 \
+            --variance-rows 1200 \
+            --rank-paid 200 \
+            --folds 5 \
+            --random-reps 10 \
+            --min-partners 2 \
+            --max-partners 8 \
+            --embedding-pcs 32 \
+            --ablation-batch 4 2>&1 | tee results/RUN_LOG.txt
+
+      - name: Record provenance and remove source data
+        if: always()
+        run: |
+          mkdir -p results
+          {
+            echo "commit=${GITHUB_SHA}"
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "runner=${RUNNER_OS}"
+            python --version || true
+            python -m pip freeze || true
+          } > results/PROVENANCE.txt
+          rm -rf data
+          find results -type f -printf '%P %s bytes\n' | sort > results/RESULT_FILE_SIZES.txt || true
+          du -sh results || true
+
+      - name: Upload derived results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: round23-scgpt-mask-value-decoupled
+          path: results/
+          if-no-files-found: error
+          retention-days: 14
